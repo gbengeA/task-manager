@@ -47,18 +47,16 @@ Sending notification require server side code to send the notification to the de
 
 # Screeenshots
 
-
 | Tasks list | Task detail  |  Add Task |
 |-------------|------------------|-----------------------|
-| ![Task Screenshot 1](Screenshot_20250225_005917.png) | ![Task Screenshot 2](Screenshot_20250225_010004.png) | ![Task Screenshot 3](Screenshot_20250225_010132.png) |
+| ![Task Screenshot 1](screenshots/Screenshot_20250225_005917.png) | ![Task Screenshot 2](screenshots/Screenshot_20250225_010004.png) | ![Task Screenshot 3](screenshots/Screenshot_20250225_010132.png) |
 
- 
-| fiail to add task | Add task with keyborad | Task saved message |
+| Fail to add task | Add task with keyboard | Task saved message |
 |-------------|------------|--------------------|
-| ![Task Screenshot 4](Screenshot_20250225_010203.png) | ![Task Screenshot 5](Screenshot_20250225_010223.png) | ![Task Screenshot 6](Screenshot_20250225_011907.png) |
- 
-|Delete task | Task notification | Task deleted |
+| ![Task Screenshot 4](screenshots/Screenshot_20250225_010203.png) | ![Task Screenshot 5](screenshots/Screenshot_20250225_010223.png) | ![Task Screenshot 6](screenshots/Screenshot_20250225_011907.png) |
+
+| Delete task | Task notification | Task deleted |
 |-----------|--------------------|----------------|
-| ![Task Screenshot 7](Screenshot_20250225_012002.png) | ![Task Screenshot 8](Screenshot_20250225_011938.png) | ![Task Screenshot 9](Screenshot_20250225_012035.png) |
+| ![Task Screenshot 7](screenshots/Screenshot_20250225_012002.png) | ![Task Screenshot 8](screenshots/Screenshot_20250225_011938.png) | ![Task Screenshot 9](screenshots/Screenshot_20250225_012035.png) |
 
 ---
