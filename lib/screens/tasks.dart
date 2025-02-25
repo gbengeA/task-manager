@@ -1,40 +1,73 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:art_sweetalert/art_sweetalert.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:hive_flutter/adapters.dart';
+import 'package:task_management/screens/task.dart';
+import 'package:task_management/util/notification_service.dart';
 import 'package:timezone/timezone.dart' as tz;
 import '../main.dart';
 import '../model/Task.dart';
 
-class TaskScreen extends StatefulWidget {
+class TasksScreen extends StatefulWidget {
 
-  static const String routeName = '/';
 
-  final NotificationAppLaunchDetails? notificationAppLaunchDetails;
+  const TasksScreen(   {super.key});
 
-  const TaskScreen( this.notificationAppLaunchDetails, {super.key});
 
-  bool get didNotificationLaunchApp =>
-      notificationAppLaunchDetails?.didNotificationLaunchApp ?? false;
   @override
-  State<TaskScreen> createState() => _TaskScreenState();
+  State<TasksScreen> createState() => _TasksScreenState();
 }
 
-class _TaskScreenState extends State<TaskScreen> {
+class _TasksScreenState extends State<TasksScreen> {
   final Box<Task> taskBox = Hive.box<Task>('tasks');
+
   final TextEditingController nameController = TextEditingController();
   final TextEditingController descriptionController = TextEditingController();
 
 
   bool _notificationsEnabled = false;
+  bool _resolved = false;
 
   @override
   void initState() {
     _isAndroidPermissionGranted();
     _requestPermissions();
+    _initNotificationSubscription();
+      FirebaseMessaging.instance.getInitialMessage().then(
+            (value) =>
+            setState(
+                  () {
+                _resolved = true;
+                var initialMessage = value?.data;
+                if (initialMessage != null) {
+                 _loadData(initialMessage);
+                }
+              },
+            ),
+      );
+
+
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+      print("On message should show notification");
+      showFlutterNotification(message, false);
+    });
+
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      print('A new onMessageOpenedApp event was published!');
+        _loadData(message.data);
+    });
+
+    //request permission
+    FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+    flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
     super.initState();
   }
 
@@ -84,52 +117,39 @@ class _TaskScreenState extends State<TaskScreen> {
   }
 
 
-
-
   Future<void> _saveTask(int? index) async {
-   if(nameController.text.isEmpty){
-     ArtSweetAlert.show(
-         context: context,
-         artDialogArgs: ArtDialogArgs(
-             type: ArtSweetAlertType.danger,
-             title: "Oops...",
-             text: "Name is required",
-         )
-     );
+    if (nameController.text.isEmpty) {
+      ArtSweetAlert.show(
+          context: context,
+          artDialogArgs: ArtDialogArgs(
+            type: ArtSweetAlertType.danger,
+            title: "Oops...",
+            text: "Name is required",
+          )
+      );
       return;
-   }
+    }
 
-   if(index==null) {
+    if (index == null) {
       final task = Task(
         id: taskBox.length + 1,
         name: nameController.text,
         description: descriptionController.text,
       );
       taskBox.add(task);
-    }else{
-     final task = Task(
-       id: index.toInt(),
-       name: nameController.text,
-       description: descriptionController.text,
-     );
+      NotificationService().sendNoti(task: task,isNewTask: true);
+    } else {
+      final task = Task(
+        id: index.toInt(),
+        name: nameController.text,
+        description: descriptionController.text,
+      );
       taskBox.putAt(index, task);
-   }
+      NotificationService().sendNoti(task: task,isNewTask: false);
+    }
 
-// sent notification
-   await flutterLocalNotificationsPlugin.zonedSchedule(
-       0,
-       nameController.text,
-       descriptionController.text,
-       tz.TZDateTime.now(tz.local).add(const Duration(seconds: 5)),
-       const NotificationDetails(
-           android: AndroidNotificationDetails(
-               'taskID', 'taskChannel',
-               channelDescription: 'Task management channel')),
-       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-       uiLocalNotificationDateInterpretation:
-       UILocalNotificationDateInterpretation.absoluteTime);
 
-   //center the textfield
+    //center the textfield
     nameController.clear();
     descriptionController.clear();
     //close the bottom sheet
@@ -137,22 +157,25 @@ class _TaskScreenState extends State<TaskScreen> {
     await ArtSweetAlert.show(
         context: context,
         artDialogArgs: ArtDialogArgs(
-            type: ArtSweetAlertType.success,
-            title: "${index==null?"Save":"Updated"} successfully",
-            text: "Task has been ${index==null?"saved":"updated"}, reminder has been set",
+          type: ArtSweetAlertType.success,
+          title: "${index == null ? "Save" : "Updated"} successfully",
+          text: "Task has been ${index == null
+              ? "saved"
+              : "updated"}, reminder has been set",
         )
     );
-   if(!_notificationsEnabled ){
-     ArtSweetAlert.show(
-         context: context,
-         artDialogArgs: ArtDialogArgs(
-             type: ArtSweetAlertType.info,
-             title: "Notification",
-             text: "Notification is disabled, enable it to get reminder",
-         )
-     );
-   }
+    if (!_notificationsEnabled) {
+      ArtSweetAlert.show(
+          context: context,
+          artDialogArgs: ArtDialogArgs(
+            type: ArtSweetAlertType.info,
+            title: "Notification",
+            text: "Notification is disabled, enable it to get reminder",
+          )
+      );
+    }
   }
+
   Future<void> _deleteTask(int index) async {
     ArtDialogResponse response = await ArtSweetAlert.show(
         barrierDismissible: false,
@@ -166,7 +189,7 @@ class _TaskScreenState extends State<TaskScreen> {
         )
     );
 
-    if(response.isTapConfirmButton) { //delete
+    if (response.isTapConfirmButton) { //delete
       taskBox.deleteAt(index);
       ArtSweetAlert.show(
           context: context,
@@ -177,8 +200,6 @@ class _TaskScreenState extends State<TaskScreen> {
       );
       return;
     }
-
-
   }
 
   void _editTask(int index) {
@@ -188,10 +209,14 @@ class _TaskScreenState extends State<TaskScreen> {
     showModalBottomSheet(
       isScrollControlled: true,
       context: context,
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: addTaskContainer( index),
-      ),
+      builder: (context) =>
+          Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery
+                .of(context)
+                .viewInsets
+                .bottom),
+            child: addTaskContainer(index),
+          ),
     );
   }
 
@@ -199,100 +224,86 @@ class _TaskScreenState extends State<TaskScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text('Task Manager'),
-        backgroundColor: Theme.of(context).primaryColor,),
-      body:  ValueListenableBuilder(
-              valueListenable: taskBox.listenable(),
-              builder: (context, Box<Task> box, _) {
-                if (box.isEmpty) {
-                  return Center(child: Text('No tasks available'));
-                }
-                return ListView.builder(
-                  padding: EdgeInsets.all(8), // Adds spacing around the list
-                  itemCount: box.length,
-                  itemBuilder: (context, index) {
-                    final task = box.getAt(index);
-                    return Card(
-                      elevation: 2, // Adds a subtle shadow
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8), // Rounded corners
-                      ),
-                      child: ListTile(
-                        onTap: (){
-                          ArtSweetAlert.show(
-                              context: context,
-                              artDialogArgs: ArtDialogArgs(
-                                  title: "Task Details",
-                                  dialogMainAxisSize: MainAxisSize.min,
-                                  customColumns: [
-                                    Text(task.name , style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),),
-                                    Container(
-                                      height:  MediaQuery.of(context).size.height*0.6,
-                                      margin: EdgeInsets.only(
-                                          bottom: 12.0
-                                      ),
-                                       child: SingleChildScrollView(
-                                         child:Text(task.description, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w400),),
-                                       )
-
-                                    )
-                                  ]
-                              )
-                          );
-                        },
-                        leading: CircleAvatar(
-                          child: Text(task!.name.substring(0,1).toUpperCase()),
-                        ),
-                        contentPadding: EdgeInsets.all( 8),
-                        title: Text(
-                          task.name,
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
-                        subtitle: Text(
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                           softWrap: true,
-                          task.description,
-                          style: TextStyle(color: Colors.grey[600]),
-                        ),
-
-                        trailing:  PopupMenuButton<String>(
-                    onSelected: (value) {
-                    if (value == 'edit') {
-                    _editTask(index);
-                    } else if (value == 'delete') {
-                    _deleteTask(index);
-                    }
+        backgroundColor: Theme
+            .of(context)
+            .primaryColor,),
+      body: ValueListenableBuilder(
+        valueListenable: taskBox.listenable(),
+        builder: (context, Box<Task> box, _) {
+          if (box.isEmpty) {
+            return Center(child: Text('No tasks available'));
+          }
+          return ListView.builder(
+            padding: EdgeInsets.all(8), // Adds spacing around the list
+            itemCount: box.length,
+            itemBuilder: (context, index) {
+              final task = box.getAt(index);
+              return Card(
+                  elevation: 2, // Adds a subtle shadow
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8), // Rounded corners
+                  ),
+                  child: ListTile(
+                    onTap: () {
+                      _showTaskDetail(task);
                     },
-                    itemBuilder: (context) => [
-                    PopupMenuItem(
-                    value: 'edit',
-                    child: Row(
-                    children: [
-                    Icon(Icons.edit, color: Colors.blue),
-                    SizedBox(width: 8),
-                    Text("Edit"),
-                    ],
+                    leading: CircleAvatar(
+                      child: Text(task!.name.substring(0, 1).toUpperCase()),
                     ),
+                    contentPadding: EdgeInsets.all(8),
+                    title: Text(
+                      task.name,
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 16),
                     ),
-                    PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                    children: [
-                    Icon(Icons.delete, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text("Delete"),
-                    ],
-                    ),)]),
+                    subtitle: Text(
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: true,
+                      task.description,
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
 
-                      )
-                    );
-                  },
-                );
+                    trailing: PopupMenuButton<String>(
+                        onSelected: (value) {
+                          if (value == 'edit') {
+                            _editTask(index);
+                          } else if (value == 'delete') {
+                            _deleteTask(index);
+                          }
+                        },
+                        itemBuilder: (context) =>
+                        [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit, color: Colors.blue),
+                                SizedBox(width: 8),
+                                Text("Edit"),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text("Delete"),
+                              ],
+                            ),)
+                        ]),
 
-              },
-            ),
+                  )
+              );
+            },
+          );
+        },
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
+
           showModalBottomSheet(
             isScrollControlled: true,
             context: context,
@@ -306,68 +317,86 @@ class _TaskScreenState extends State<TaskScreen> {
       ),
     );
   }
-  SingleChildScrollView addTaskContainer(int? index) {
-    return  SingleChildScrollView(
-      child:  Container(
-      margin: EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text("${index==null?"Add":"Edit"} Task", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),),
-SizedBox( height: 16,),
-          TextField(
-            controller: nameController,
-            decoration: InputDecoration(
-              labelText: 'Name',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          SizedBox(height: 8),
-          TextField(
-            minLines:3,
-            maxLines: 5,
-            controller: descriptionController,
-            decoration: InputDecoration(
-              labelText: 'Description',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              TextButton(onPressed: (){
-                Navigator.pop(context);
-              }, child: Text('Cancel', style: TextStyle(color: Colors.red),)),
-              ElevatedButton(
-                onPressed: (){_saveTask(index);},
-                child: Text('${index==null?"Add":"Update"} Task', style: TextStyle(color: Colors.green),),
-              ),
-            ],
-          )
-        ],
-      ),
-    ),
-    );
 
+  SingleChildScrollView addTaskContainer(int? index) {
+    return SingleChildScrollView(
+      child: Container(
+        margin: EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text("${index == null ? "Add" : "Edit"} Task",
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),),
+            SizedBox(height: 16,),
+            TextField(
+              controller: nameController,
+              decoration: InputDecoration(
+                labelText: 'Name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            SizedBox(height: 8),
+            TextField(
+              minLines: 3,
+              maxLines: 5,
+              controller: descriptionController,
+              decoration: InputDecoration(
+                labelText: 'Description',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                TextButton(onPressed: () {
+                  Navigator.pop(context);
+                }, child: Text('Cancel', style: TextStyle(color: Colors.red),)),
+                ElevatedButton(
+                  onPressed: () {
+                    _saveTask(index);
+                  },
+                  child: Text('${index == null ? "Add" : "Update"} Task',
+                    style: TextStyle(color: Colors.green),),
+                ),
+              ],
+            )
+          ],
+        ),
+      ),
+    );
   }
 
-  // Future<void> _zonedScheduleNotification() async {
-  //
-  // }
-  //
-  // Future<void> _zonedScheduleAlarmClockNotification( Duration duration) async {
-  //   await flutterLocalNotificationsPlugin.zonedSchedule(
-  //       123,
-  //       'scheduled alarm clock title',
-  //       'scheduled alarm clock body',
-  //       tz.TZDateTime.now(tz.local).add(duration),
-  //       const NotificationDetails(
-  //           android: AndroidNotificationDetails(
-  //               'alarm_clock_channelTas', 'Alarm Clock Channel',
-  //               channelDescription: 'Alarm Clock Notification')),
-  //       androidScheduleMode: AndroidScheduleMode.alarmClock,
-  //       uiLocalNotificationDateInterpretation:
-  //       UILocalNotificationDateInterpretation.absoluteTime);
-  // }
+
+  void _showTaskDetail(Task task) {
+     Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => TaskScreen(task: task),
+      ));
+  }
+
+  void _loadData( Map<String, dynamic> messageData
+      ) {
+    //print("payload $payload");
+    try {
+     // Map<String, dynamic> messageData = jsonDecode(payload ?? "");
+      Task task = Task.fromJson(jsonDecode(messageData['task']));
+      _showTaskDetail(task);
+    } catch (e) {
+      print(" showing dailog  $e");
+    }
+  }
+
+  Future<void> _initNotificationSubscription() async {
+    var box = Hive.box('settingsBox');
+    bool isSubscribed = box.get('isSubscribed', defaultValue: false);
+
+    if (!isSubscribed) {
+      NotificationService().subscribeToTopic();
+      box.put('isSubscribed', true); // Store subscription status
+    }
+  }
+
+
 }

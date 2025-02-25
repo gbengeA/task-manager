@@ -1,190 +1,208 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:task_management/screens/task.dart';
 import 'package:task_management/screens/tasks.dart';
 
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import 'firebase_options.dart';
 import 'model/Task.dart';
 
-int id = 0;
 
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-FlutterLocalNotificationsPlugin();
 
-final StreamController<String?> selectNotificationStream =
-StreamController<String?>.broadcast();
+/// Create a [AndroidNotificationChannel] for heads up notifications
+late AndroidNotificationChannel channel;
 
-const MethodChannel platform =
-MethodChannel('dexterx.dev/flutter_local_notifications_example');
+/// Create a [AndroidNotificationChannel] for heads up notifications
+bool   isFlutterLocalNotificationsInitialized = false;
 
-const String portName = 'notification_send_port';
+Future<void> showFlutterNotification(RemoteMessage message, bool  isBackground) async {
+  print("Showing from @${isBackground?"Background":" foreground"}");
 
-class ReceivedNotification {
-  ReceivedNotification({
-    required this.id,
-    required this.title,
-    required this.body,
-    required this.payload,
-  });
+  RemoteNotification? notification = message.notification;
+  AndroidNotification? android = message.notification?.android;
+  if (notification != null && android != null && !kIsWeb) {
+    //String senderId= message.data['senderId']??"";
+    //block if notification is coming from self.
+      FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+      flutterLocalNotificationsPlugin.show(
+        notification.android.hashCode,
+        "${notification.title}",
+        notification.body,
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            channel.id,
+            channel.name,
+            channelDescription: channel.description,
+            icon: 'launch_background',
+            importance: Importance.max,
+            // High importance to make sure it's heads-up
+            priority: Priority
+                .high, // Set to high priority for heads-up notifications
+          ),
+        ),
+        payload: jsonEncode(message.data), // Pass data as payload
 
-  final int id;
-  final String? title;
-  final String? body;
-  final String? payload;
-}
-
-String? selectedNotificationPayload;
-
-/// A notification action which triggers a url launch event
-const String urlLaunchActionId = 'id_1';
-
-/// A notification action which triggers a App navigation event
-const String navigationActionId = 'id_3';
-
-/// Defines a iOS/MacOS notification category for text input actions.
-const String darwinNotificationCategoryText = 'textCategory';
-
-/// Defines a iOS/MacOS notification category for plain actions.
-const String darwinNotificationCategoryPlain = 'plainCategory';
-
-@pragma('vm:entry-point')
-void notificationTapBackground(NotificationResponse notificationResponse) {
-  // ignore: avoid_print
-  print('notification(${notificationResponse.id}) action tapped: '
-      '${notificationResponse.actionId} with'
-      ' payload: ${notificationResponse.payload}');
-  if (notificationResponse.input?.isNotEmpty ?? false) {
-    // ignore: avoid_print
-    print(
-        'notification action tapped with input: ${notificationResponse.input}');
+      );
   }
 }
 
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+
+  WidgetsFlutterBinding.ensureInitialized();
+  if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  }
+  await setupFlutterNotifications();
+}
+
+
+/// The backgroundHandler needs to be either a static function or a top
+void backgroundNotificationHandler(NotificationResponse notificationResponse) {//
+  print("onDidReceiveBackgroundNotificationResponse ${notificationResponse.actionId}, ${notificationResponse.payload}");
+  if (notificationResponse.payload != null) {
+    loadDataNext(notificationResponse.payload);
+    print(' Handling a  notificationResponse.payload');
+  }else {
+    print('NULL Handling notificationResponse.payload');
+  }
+}
+
+Future<void> setupFlutterNotifications() async {
+  if (isFlutterLocalNotificationsInitialized) {
+    print("Already init ");
+    return;
+  }else{
+    print("Init var again ");
+  }
+  channel = const AndroidNotificationChannel(
+    'high_importance_channel', // id
+    'High Importance Notifications', // title
+    description:
+    'This channel is used for important notifications.', // description
+    importance: Importance.high,
+  );
+
+  flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+  flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.requestNotificationsPermission();
+  /// Create an Android Notification Channel.
+  ///
+  /// We use this channel in the `AndroidManifest.xml` file to override the
+  /// default FCM channel to enable heads up notifications.
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(channel);
+
+  /// Update the iOS foreground notification presentation options to allow
+  /// heads up notifications.
+  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
+
+  // flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+  //     ?.createNotificationChannel(channel);
+
+
+  isFlutterLocalNotificationsInitialized = true;
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings("launch_background");
+  //final LinuxInitializationSettings initializationSettingsLinux =
+  // LinuxInitializationSettings(
+  //   defaultActionName: 'Open notification',
+  //   defaultIcon: AssetsLinuxIcon('icons/app_icon.png'),
+  // );
+  final InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+    //iOS: initializationSettingsDarwin,
+    // macOS: initializationSettingsDarwin,
+    // linux: initializationSettingsLinux,
+  );
+
+  await flutterLocalNotificationsPlugin.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse:
+          (NotificationResponse notificationResponse) {
+        print("onDidReceiveNotificationResponse ${notificationResponse.actionId}, ${notificationResponse.payload}");
+        loadDataNext(notificationResponse.payload);
+      },
+      onDidReceiveBackgroundNotificationResponse:backgroundNotificationHandler );
+
+}
+
+
+
+
+final navigatorKey = GlobalKey<NavigatorState>();
+/// Initialize the [FlutterLocalNotificationsPlugin] package.
+late FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Hive.initFlutter();
    Hive.registerAdapter(TaskAdapter());
   await Hive.openBox<Task>('tasks');
+  var box = await Hive.openBox('settingsBox');
 
-  await _configureLocalTimeZone();
-
-  final NotificationAppLaunchDetails? notificationAppLaunchDetails = !kIsWeb &&
-      Platform.isLinux
-      ? null
-      : await flutterLocalNotificationsPlugin.getNotificationAppLaunchDetails();
-  if (notificationAppLaunchDetails?.didNotificationLaunchApp ?? false) {
-    selectedNotificationPayload =
-        notificationAppLaunchDetails!.notificationResponse?.payload;
+  if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp(
+        name: "task_management",
+        options: DefaultFirebaseOptions.currentPlatform);
   }
 
-  const AndroidInitializationSettings initializationSettingsAndroid =
-  AndroidInitializationSettings('app_icon');
-  final List<DarwinNotificationCategory> darwinNotificationCategories =
-  <DarwinNotificationCategory>[
-    DarwinNotificationCategory(
-      darwinNotificationCategoryText,
-      actions: <DarwinNotificationAction>[
-        DarwinNotificationAction.text(
-          'text_1',
-          'Action 1',
-          buttonTitle: 'Send',
-          placeholder: 'Placeholder',
-        ),
-      ],
-    ),
-    DarwinNotificationCategory(
-      darwinNotificationCategoryPlain,
-      actions: <DarwinNotificationAction>[
-        DarwinNotificationAction.plain('id_1', 'Action 1'),
-        DarwinNotificationAction.plain(
-          'id_2',
-          'Action 2 (destructive)',
-          options: <DarwinNotificationActionOption>{
-            DarwinNotificationActionOption.destructive,
-          },
-        ),
-        DarwinNotificationAction.plain(
-          navigationActionId,
-          'Action 3 (foreground)',
-          options: <DarwinNotificationActionOption>{
-            DarwinNotificationActionOption.foreground,
-          },
-        ),
-        DarwinNotificationAction.plain(
-          'id_4',
-          'Action 4 (auth required)',
-          options: <DarwinNotificationActionOption>{
-            DarwinNotificationActionOption.authenticationRequired,
-          },
-        ),
-      ],
-      options: <DarwinNotificationCategoryOption>{
-        DarwinNotificationCategoryOption.hiddenPreviewShowTitle,
-      },
-    )
-  ];
 
-  /// Note: permissions aren't requested here just to demonstrate that can be
-  /// done later
-  final DarwinInitializationSettings initializationSettingsDarwin =
-  DarwinInitializationSettings(
-    requestAlertPermission: false,
-    requestBadgePermission: false,
-    requestSoundPermission: false,
-    notificationCategories: darwinNotificationCategories,
-  );
-  final LinuxInitializationSettings initializationSettingsLinux =
-  LinuxInitializationSettings(
-    defaultActionName: 'Open notification',
-    defaultIcon: AssetsLinuxIcon('icons/app_icon.png'),
-  );
-  final InitializationSettings initializationSettings = InitializationSettings(
-    android: initializationSettingsAndroid,
-    iOS: initializationSettingsDarwin,
-    macOS: initializationSettingsDarwin,
-    linux: initializationSettingsLinux,
-  );
-  await flutterLocalNotificationsPlugin.initialize(
-    initializationSettings,
-    onDidReceiveNotificationResponse:
-        (NotificationResponse notificationResponse) {
-      switch (notificationResponse.notificationResponseType) {
-        case NotificationResponseType.selectedNotification:
-          selectNotificationStream.add(notificationResponse.payload);
-          break;
-        case NotificationResponseType.selectedNotificationAction:
-          if (notificationResponse.actionId == navigationActionId) {
-            selectNotificationStream.add(notificationResponse.payload);
-          }
-          break;
-      }
-    },
-    onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
-  );
-  runApp(MaterialApp(
-    debugShowCheckedModeBanner: false,
-    title: 'Task Management',
-    theme: ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-      useMaterial3: true,
-    ),
-    home: TaskScreen(notificationAppLaunchDetails),
-  ));
+  //await  PushNotification.initNotification();
+
+  // Set the background messaging handler early on, as a named top-level function
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  if (!kIsWeb) {
+    await setupFlutterNotifications();
+  }
+
+  runApp(MyApp());
+
 }
-Future<void> _configureLocalTimeZone() async {
-  if (kIsWeb || Platform.isLinux) {
-    return;
+
+class MyApp extends StatelessWidget {
+  MyApp({super.key});
+  // This widget is the root of your application.
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      navigatorKey: navigatorKey,
+      debugShowCheckedModeBanner: false,
+      home: const TasksScreen(),
+    );
   }
-  tz.initializeTimeZones();
-  final String? timeZoneName = await FlutterTimezone.getLocalTimezone();
-  tz.setLocalLocation(tz.getLocation(timeZoneName!));
 }
 
 
+
+
+void  loadDataNext(String? payload) { //String? payload
+  try{
+    print("Navigating to Task page");
+    Map<String, dynamic> messageData = jsonDecode(payload??"");
+    Task task =  Task.fromJson(jsonDecode(messageData['task']));
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(builder: (context) =>TaskScreen(task: task)),
+    );
+  }catch(e ){
+    print("Error navigating to page  $e");
+
+  }
+}
